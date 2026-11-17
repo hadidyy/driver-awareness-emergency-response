@@ -1,0 +1,17 @@
+* text=auto
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.mp4 binary
+*.avi binary
+*.slx binary
+*.pdsprj binary
+*.SLDPRT binary
+*.SLDASM binary
+*.sldprt binary
+*.sldasm binary
+*.step binary
+*.stp binary
+*.stl binary
