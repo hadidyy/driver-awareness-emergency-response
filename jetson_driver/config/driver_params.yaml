@@ -1,0 +1,180 @@
+# ============================================================================
+#  jetson_driver default parameters — unified rewrite (2026-05-18).
+#
+#  Defense run goal: reliable on-stage demo.  Tuning prioritises:
+#    * Motor PWM stays above the prototype's static-friction floor
+#      (THROTTLE_MIN_PWM applied AFTER sign in control_node).
+#    * FSM transitions only fire after a minimum dwell + cooldown
+#      (planner_node.min_dwell_in_state_frames, transition_cooldown_frames).
+#    * Lane / obstacle signals are debounced upstream in perception_node.
+#
+#  Edit /dev/ttyUSB_* paths to match your udev rules — see
+#  JETSON_DEPLOYMENT.md.  Cameras pinned via 99-cameras.rules
+#  -> /dev/video_FRONT regardless of plug order.
+# ============================================================================
+
+camera_node:
+  ros__parameters:
+    source: "usb"
+    front_device: "/dev/video_FRONT"
+    rear_device:  "-1"
+    width:  640
+    height: 480
+    fps: 30
+    flip_front: false
+    flip_rear: true
+
+perception_node:
+  ros__parameters:
+    publish_debug: true
+    lane_backend: "classical"           # HLS + Canny fused + sliding-window polyfit
+
+planner_node:
+  ros__parameters:
+    enable_lane_changes:        true
+    enable_parking:             true
+    require_trigger:            true
+    require_blindspot_clear:    false   # rear cam disabled -> bypass blindspot gate
+
+    # ========================================================================
+    #  AUTO LANE-CHANGE FALLBACK  --  tune these two knobs for the demo
+    # ========================================================================
+    #
+    # If no obstacle is seen in front of the car within
+    # auto_lanechange_timeout_s seconds after pressing GO, the planner
+    # fires CHANGE_LANE_RIGHT anyway.  Failsafe for the cases where:
+    #   * the professor didn't put down a decoy, or
+    #   * YOLO failed to recognise the decoy.
+    #
+    # The manual "lanechange" trigger also exists at any time:
+    #   ros2 topic pub --once /start_parking std_msgs/String "{data: 'lanechange'}"
+    #
+    # To tune ONLY the auto-trigger timeout, edit
+    # `auto_lanechange_timeout_s` below.  No rebuild needed -- the launch
+    # picks it up on the next start.
+    enable_auto_lanechange:     true     # set false to disable the auto-trigger
+    auto_lanechange_timeout_s:  1.5     # <-- seconds in LANE_FOLLOW before auto-merge
+    auto_lanechange_log_every_s: 2.0     # countdown log cadence (0 = silent)
+
+    # ========================================================================
+    #  LANE-LOST SAFETY WATCHDOG  --  protects the car from running off
+    #  the track and hitting things during testing.
+    # ========================================================================
+    #
+    # If /lane_found is False for more than lane_lost_timeout_s seconds
+    # while the car is in a state that requires lane tracking
+    # (LANE_FOLLOW / SLOW_FOR_OBSTACLE / SEARCH_PARK), the planner
+    # FORCES HOLD (brake) and DISARMS drive.  Press GO again to resume.
+    #
+    # The watchdog is BYPASSED in CHANGE_LANE_RIGHT (lane naturally drops
+    # out mid-merge) and PULL_OVER (open-loop parking maneuver).
+    #
+    # To DISABLE during demos where you trust the lane detector:
+    #   enable_lane_lost_stop: false
+    # To make the watchdog MORE conservative (stop sooner): lower
+    #   lane_lost_timeout_s, e.g. to 1.0 s.
+    # To make it MORE forgiving (allow longer dropouts): raise to 3.0+.
+    enable_lane_lost_stop:      false
+    lane_lost_timeout_s:        2.0      # <-- seconds without /lane_found=True
+    lane_lost_warn_every_s:     0.5      # warning log cadence past 50% of timeout
+
+    # ========================================================================
+    #  POST-MERGE OBSTACLE MUTING  --  skip extra SLOW_FOR_OBSTACLE
+    #  detours between the lane change and the parking ramp.
+    # ========================================================================
+    #
+    # After the (one allowed) lane change has fired, the planner
+    # IGNORES /obstacle_ahead so YOLO false-positives -- clutter near
+    # the parking strip, the decoy itself as we pass it, lab people,
+    # etc. -- don't drag the FSM into SLOW_FOR_OBSTACLE while we're
+    # heading toward SEARCH_PARK -> PULL_OVER -> PARKED.
+    #
+    # Set false to keep YOLO-driven slowdowns active for the whole run.
+    disable_obstacle_after_merge: true
+
+    # Per-state dwells (frames @ PLANNER_HZ = 20 Hz).
+    lc_safe_frames_to_merge:    20
+    lc_obstacle_clear_frames:   20      # ~1.2 s fallback merge exit
+    post_change_dwell_frames:   20      # ~3.0 s in right lane before park
+    park_safe_frames:           10      # ~1.0 s rear clear before PULL_OVER
+
+    # Vision-aware merge exit.
+    # DEFENSE-DAY TUNING (2026-05-23): the previous (30 frames, 0.85 steer)
+    # caused the car to over-rotate during the auto-trigger merge and
+    # drive off the right edge of the track.  Cut merge duration in
+    # half so the car spends less time at the open-loop steer angle.
+    # Pair with control_node.lane_change_steer dropped 0.85 -> 0.55
+    # below for a much softer arc.
+    min_merge_frames:           18      # was 30 -- ~0.9 s open-loop arc
+    merge_complete_err_px:      35.0    # was 30 -- accept a slightly off-centre exit
+    merge_settled_frames_req:   4       # was 6 -- exit faster once lane settles
+
+    # The two new anti-mode-chatter knobs.  Together with the upstream
+    # debouncers in perception_node, these are what kill the "modes jump
+    # in a crazy way" failure observed in approach 1.
+    min_dwell_in_state_frames:  10      # ~0.5 s before any transition is considered
+    transition_cooldown_frames: 6       # ~0.4 s of no further transitions
+
+control_node:
+  ros__parameters:
+    lateral_controller: "PID"
+
+    # PID gains — bench-tuned, preserved from approach 1.
+    steer_kp:           0.015
+    steer_ki:           0.001
+    steer_kd:           0.002
+    steer_clamp:        1.0
+    integral_clamp:     120.0
+    d_input_clamp:      40.0
+    dead_zone_px:       5.0
+    max_steer_delta:    0.15
+
+    # Pure-pursuit (only if lateral_controller="pure_pursuit").
+    lookahead_px:       160
+    wheelbase_px_equiv: 240.0
+    steer_gain_pp:      2.2
+
+    # Throttle / brake.  THROTTLE_MIN_PWM is the absolute floor on the
+    # magnitude of the published throttle — guarantees the motor PWM
+    # stays above the prototype's static-friction break-away.
+    throttle_full_kmh:  14.0
+    throttle_min_pwm:   1.0
+    brake_reverse:     -0.35
+    invert_steer:       false
+    invert_throttle:    true            # chassis: H-bridge motor leads wired reversed
+    lane_change_steer:  0.55   # was 0.85 -- softer arc; paired with shorter
+                               #            min_merge_frames so the car
+                               #            stays inside the right lane.
+    pull_over_steer:    0.60
+
+    # Drive-arm kick — pushes throttle to drive_kick_throttle for
+    # drive_kick_frames on every drive_enabled rising edge.  Overcomes
+    # static friction at start-up.
+    drive_kick_throttle: 1.00
+    drive_kick_frames:   6              # ~0.3 s at CONTROL_HZ=20
+
+    # Pulse-mode throttle — alternates ON (=throttle_min_pwm) and OFF
+    # (=0) frames so the motor breaks friction on each ON pulse but
+    # coasts during OFF frames.  Lets us pick any average speed without
+    # stalling.  Effective speed ≈ duty × full speed, where
+    #   duty = target_kmh / throttle_full_kmh.
+    # To go FASTER overall: raise the SPEED_*_KMH values in common.py.
+    # To go SLOWER overall: lower them.
+    # To make pulses smoother (less jerky): raise pulse_period_frames
+    # (e.g. 8) — slower pulse rate, longer ON / OFF runs.
+    # To kill pulse mode entirely (run at the floor): set
+    # enable_pulse_mode: false.
+    enable_pulse_mode:   false
+    pulse_period_frames: 5              # 5 frames @ 20 Hz = 250 ms cycle (4 Hz)
+    pulse_min_on_frames: 2              # always at least 2 ON frames/cycle
+
+motor_bridge_node:
+  ros__parameters:
+    serial_port: "/dev/ttyUSB_MOTOR"
+    baud:         115200
+    simulate:     false
+
+trigger_bridge_node:
+  ros__parameters:
+    wifi_port: 5005
+    simulate:  false

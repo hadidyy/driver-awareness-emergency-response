@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+install/
+log/
+.vscode/
+.idea/
+*.pt
+*.onnx
+*.engine
+*.bag
+*.db3
+.env
+secrets.h
+credentials.h
