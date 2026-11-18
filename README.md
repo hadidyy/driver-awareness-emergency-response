@@ -1,6 +1,8 @@
 # Driver-Awareness Emergency-Response Vehicle
 
-A ROS 2 and ESP32 prototype that combines driver-state sensing, lane perception, autonomous pull-over behavior, emergency stopping, and a parametric vehicle chassis.
+An NVIDIA Jetson Orin Nano-centered ROS 2 prototype that integrates Raspberry Pi and ESP32 hardware for driver-state sensing, lane perception, autonomous pull-over behavior, emergency stopping, and low-level vehicle control.
+
+The **NVIDIA Jetson Orin Nano is the primary onboard AI and ROS 2 computer** in the system. It runs the computer-vision, perception, behavior-planning, and control stack, while the Raspberry Pi and ESP32 boards provide complementary embedded processing, sensor integration, communication, and actuator interfacing.
 
 ![Parametric Ackermann-steering chassis](cad/preview/iso_front.png)
 
@@ -8,7 +10,8 @@ A ROS 2 and ESP32 prototype that combines driver-state sensing, lane perception,
 
 ## What this project demonstrates
 
-- A six-node ROS 2 stack for camera capture, perception, behavior planning, lateral/longitudinal control, and hardware bridges
+- NVIDIA Jetson Orin Nano as the main onboard computer for the six-node ROS 2, AI, computer-vision, planning, and control stack
+- Raspberry Pi and ESP32 hardware working alongside the Jetson for distributed embedded processing, sensor/communication integration, and low-level control
 - Classical lane detection using HLS color masks, Canny edges, sliding-window polynomial fitting, confidence scoring, and debouncing
 - Optional YOLO obstacle detection without committing third-party model weights to the repository
 - A dwell-gated finite-state machine for lane following, obstacle handling, lane change, pull-over, and parked states
